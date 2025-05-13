@@ -1,64 +1,61 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 // passport import might be removed if not used elsewhere in this file or subsequent logic
 // import passport from "@/lib/passport";
 // AuthenticateOptions will be removed as passport.authenticate is not called this way anymore
 // import type { AuthenticateOptions } from "passport";
-import {
-  getIronSession,
-  type IronSessionData as SessionData,
-} from "iron-session";
-import { sessionOptions } from "@/lib/session";
-import { cookies } from "next/headers";
+import { getAppRouterSession } from '@/lib/session';
+// SessionData type from @/lib/session might be needed if we were to type the session object explicitly here,
+// but getAppRouterSession() already returns a typed session object.
+import { randomBytes } from 'crypto';
 
 // The MockResAdapter interface is no longer needed
 // interface MockResAdapter { ... }
 
 // Keeping _req as it is standard for Next.js route handlers, even if unused.
-export async function GET(req: NextRequest) {
-  const scopes = [
-    "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish,instagram_business_manage_insights",
-  ];
+export async function GET() {
+  const INSTAGRAM_CLIENT_ID = process.env.INSTAGRAM_CLIENT_ID;
+  const INSTAGRAM_REDIRECT_URI = process.env.INSTAGRAM_REDIRECT_URI;
 
-  // Ensure these environment variable names match your setup
-  const clientId = process.env.INSTAGRAM_CLIENT_ID;
-  const redirectUri = process.env.INSTAGRAM_REDIRECT_URI;
-  // This is the common endpoint for Instagram Graph API. Verify if your specific setup or scopes require a different one (e.g., Facebook\'s).\
-  const instagramAuthEndpoint = "https://api.instagram.com/oauth/authorize";
-
-  if (!clientId || !redirectUri) {
-    console.error(
-      "Instagram OAuth environment variables (INSTAGRAM_CLIENT_ID, INSTAGRAM_CALLBACK_URL) are not set."
-    );
+  if (!INSTAGRAM_CLIENT_ID || !INSTAGRAM_REDIRECT_URI) {
+    console.error('Missing Instagram OAuth environment variables: INSTAGRAM_CLIENT_ID or INSTAGRAM_REDIRECT_URI');
     return NextResponse.json(
-      { message: "Server configuration error for Instagram OAuth." },
+      { error: 'Server configuration error for Instagram OAuth.' },
       { status: 500 }
     );
   }
 
-  // Using intersection type for session to include instagramOAuthState locally.
-  // The definitive solution is to update the global SessionData type.
-  const session = await getIronSession<
-    SessionData & { instagramOAuthState?: string }
-  >(await cookies(), sessionOptions);
+  const session = await getAppRouterSession();
 
-  // Generate state for CSRF protection
-  const state = globalThis.crypto.randomUUID();
+  // Generate a random state for CSRF protection
+  const state = randomBytes(16).toString('hex');
   session.instagramOAuthState = state;
   await session.save();
 
+  const scopes = [
+    'user_profile',       // Required by Facebook Login, gives access to basic user profile info
+    // 'user_media',      // For Instagram Basic Display API - to read user's media. Might not be needed if only publishing.
+    'instagram_basic',    // Access to the Instagram Graph API User node
+    'pages_show_list',    // To list all Pages the user manages
+    'instagram_content_publish', // To publish media to Instagram
+    'business_management',// To manage business assets, often needed for Page-related permissions
+    'pages_read_engagement',// To read Page content, posts, comments, etc.
+    // Add other scopes like instagram_manage_comments, instagram_manage_insights if needed
+  ];
+
   const params = new URLSearchParams({
-    client_id: clientId,
-    redirect_uri: redirectUri,
-    scope: scopes.join(","), // Instagram Graph API uses comma-separated scopes
-    response_type: "code",
+    client_id: INSTAGRAM_CLIENT_ID,
+    redirect_uri: INSTAGRAM_REDIRECT_URI,
+    scope: scopes.join(','), // Scopes are comma-separated for Facebook OAuth
+    response_type: 'code',
     state: state,
   });
 
-  const authorizationUrl = new URL(
-    `${instagramAuthEndpoint}?${params.toString()}`
-  );
+  // Authorization URL for Facebook Login, which grants permissions for Instagram Graph API
+  // const authorizationUrl = `https://www.facebook.com/v19.0/dialog/oauth?${params.toString()}`;
+  const authorizationUrl = `https://api.instagram.com/oauth/authorize?${params.toString()}`;
+  
+  // console.log('Redirecting to Facebook OAuth for Instagram permissions:', authorizationUrl);
 
-  console.log({ authorizationUrl });
   return NextResponse.redirect(authorizationUrl);
 }
 

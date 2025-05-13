@@ -13,7 +13,7 @@ interface InstagramGraphApiSessionData {
 
 // Adjust SessionData if needed, or use a more specific type for this route
 type SessionData = {
-  user?: any; // Keep existing user session structure if needed
+  user?: unknown; // Keep existing user session structure if needed
   instagramGraphApi?: InstagramGraphApiSessionData;
   [key: string]: unknown;
 };
@@ -30,12 +30,19 @@ export async function POST(req: NextRequest) {
     sessionOptions
   );
 
+  console.log("Session data:", JSON.stringify(session, null, 2));
+
   // TODO: Securely retrieve the Instagram Graph API access token and IG User ID.
   // This might come from the session if a Facebook Login flow for content publishing
   // has been implemented and these details are stored.
   // For now, using placeholders. Replace with actual retrieval logic.
   const graphApiAccessToken = session.instagramGraphApi?.graphApiAccessToken || process.env.PLACEHOLDER_INSTAGRAM_GRAPH_API_ACCESS_TOKEN;
   const instagramUserId = session.instagramGraphApi?.instagramUserId || process.env.PLACEHOLDER_INSTAGRAM_USER_ID;
+
+  console.log("Retrieved graphApiAccessToken:", graphApiAccessToken);
+  console.log("Retrieved instagramUserId:", instagramUserId);
+  console.log("Env PLACEHOLDER_INSTAGRAM_GRAPH_API_ACCESS_TOKEN:", process.env.PLACEHOLDER_INSTAGRAM_GRAPH_API_ACCESS_TOKEN);
+  console.log("Env PLACEHOLDER_INSTAGRAM_USER_ID:", process.env.PLACEHOLDER_INSTAGRAM_USER_ID);
 
   if (!graphApiAccessToken || !instagramUserId) {
     return NextResponse.json(
@@ -73,30 +80,30 @@ export async function POST(req: NextRequest) {
     // Docs: https://developers.facebook.com/docs/instagram-platform/content-publishing#create-a-container
     const createContainerUrl = `https://graph.facebook.com/v19.0/${instagramUserId}/media`; // Use latest stable API version
     
-    const containerParams = new URLSearchParams({
-      access_token: graphApiAccessToken,
+    const containerPayload: { image_url: string; caption?: string } = {
       image_url: imageUrl,
-    });
+    };
     if (caption) {
-      containerParams.append("caption", caption);
+      containerPayload.caption = caption;
     }
 
     const containerResponse = await fetch(createContainerUrl, {
       method: "POST",
-      body: containerParams,
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${graphApiAccessToken}`,
       },
+      body: JSON.stringify(containerPayload),
     });
 
     if (!containerResponse.ok) {
       const errorBody = await containerResponse.json().catch(() => ({
-        error_message: "Failed to create media container and couldn\'t parse error response.",
+        error: { message: "Failed to create media container and couldn't parse error response." },
       }));
       console.error("Error creating media container:", errorBody);
       return NextResponse.json(
         {
-          error: `Failed to create media container. Status: ${containerResponse.status}. Message: ${errorBody.error_message || JSON.stringify(errorBody)}`,
+          error: `Failed to create media container. Status: ${containerResponse.status}. Message: ${errorBody.error?.message || JSON.stringify(errorBody)}`,
         },
         { status: containerResponse.status }
       );
@@ -117,29 +124,29 @@ export async function POST(req: NextRequest) {
     // Docs: https://developers.facebook.com/docs/instagram-platform/content-publishing#publish-the-container
     const publishMediaUrl = `https://graph.facebook.com/v19.0/${instagramUserId}/media_publish`;
     
-    const publishParams = new URLSearchParams({
-      access_token: graphApiAccessToken,
+    const publishPayload = {
       creation_id: creationId,
-    });
+    };
 
     const publishResponse = await fetch(publishMediaUrl, {
       method: "POST",
-      body: publishParams,
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${graphApiAccessToken}`,
       },
+      body: JSON.stringify(publishPayload),
     });
 
     if (!publishResponse.ok) {
       const errorBody = await publishResponse.json().catch(() => ({
-        error_message: "Failed to publish media and couldn\'t parse error response.",
+        error: { message: "Failed to publish media and couldn't parse error response." },
       }));
       console.error("Error publishing media:", errorBody);
       // It might be useful to check the status of the container if publishing fails
       // GET /{ig-container-id}?fields=status_code
       return NextResponse.json(
         {
-          error: `Failed to publish media. Status: ${publishResponse.status}. Message: ${errorBody.error_message || JSON.stringify(errorBody)}`,
+          error: `Failed to publish media. Status: ${publishResponse.status}. Message: ${errorBody.error?.message || JSON.stringify(errorBody)}`,
           creationId: creationId, // Return creation_id for potential manual retry or status check
         },
         { status: publishResponse.status }

@@ -1,5 +1,5 @@
-
-import InstagramLoginButton from '@/components/InstagramLoginButton';
+import InstagramLoginButton from "@/components/InstagramLoginButton";
+import InstagramPostForm from "@/components/InstagramPostForm";
 
 export default function DashboardPage() {
   return (
@@ -8,6 +8,7 @@ export default function DashboardPage() {
       <p className="mb-4">Connect your Instagram account to get started.</p>
       <InstagramLoginButton />
       {/* TODO: Add logic to list connected accounts here */}
+      <InstagramPostForm />
     </div>
   );
-} 
+}

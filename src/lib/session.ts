@@ -1,66 +1,59 @@
 import type { SessionOptions } from 'iron-session';
-// import { withIronSessionApiRoute, withIronSessionSsr } from 'iron-session'; // Already removed
-// Remove unused imports from next
-// import type { GetServerSidePropsContext, GetServerSidePropsResult, NextApiHandler } from 'next';
+// import type { NextApiRequest, NextApiResponse } from 'next'; // Kept commented for potential Pages Router use
+import { getIronSession, IronSession } from 'iron-session';
+import { cookies } from 'next/headers'; // For App Router
 
-// This is the secret used to encrypt the session cookie.
-// It should be a string of at least 32 characters.
-// You should store this in an environment variable.
-const sessionPassword = process.env.SESSION_PASSWORD;
+// Define your session data structure more concretely
+interface InstagramGraphApiSessionData {
+  graphApiAccessToken?: string;
+  instagramUserId?: string; // This is the Instagram Professional Account ID
+  // Potentially store page ID if needed for other operations
+  pageId?: string; 
+}
 
-if (!sessionPassword) {
-  console.warn(
-    'SESSION_PASSWORD environment variable is not set. Session will not be secure. Please set it in your .env.local file. Using a default insecure password for development.'
-  );
-  // Consider uncommenting the throw for stricter local development or CI environments:
-  // throw new Error('Missing SESSION_PASSWORD environment variable. Please set it in .env.local');
-} else if (sessionPassword.length < 32) {
-  // Throw an error if SESSION_PASSWORD is set but is shorter than 32 characters
-  throw new Error(
-    'SESSION_PASSWORD environment variable is set but is shorter than 32 characters. Please ensure it is at least 32 characters long.'
-  );
+export interface SessionData {
+  isLoggedIn?: boolean;
+  user?: { // Basic user info from your app's perspective if any
+    id: string;
+    username?: string;
+  };
+  instagramOAuthState?: string; // For CSRF protection during OAuth flow
+  instagramGraphApi?: InstagramGraphApiSessionData;
+  [key: string]: unknown; // Allow other session data
 }
 
 export const sessionOptions: SessionOptions = {
-  password: sessionPassword || 'fallback_insecure_password_for_dev_at_least_32_chars_long', // IMPORTANT: SET A REAL SECRET FOR PRODUCTION!
-  cookieName: 'myapp-instagram-session', // More specific cookie name
+  password: process.env.APP_SECRET as string,
+  cookieName: 'myapp-session', // Choose a unique cookie name
   cookieOptions: {
     secure: process.env.NODE_ENV === 'production',
     httpOnly: true,
     sameSite: 'lax',
-    maxAge: 60 * 60 * 24 * 7, // Session duration: 7 days
   },
 };
 
-// Define and export SessionData interface directly
-export interface SessionData {
-  user?: {
-    id: string; // Your application's user ID
-    // You might also store the Instagram user ID if needed frequently, or the access token for client-side calls (with caution)
-    // instagramId?: string;
-    // username?: string; // Your app username or Instagram username
-  };
-  // Passport.js can also add its own data to the session if `passport.session()` is used.
-  // If you use `passport.initialize()` and `passport.session()` middlewares for API routes (which is common with Express, less so with direct iron-session management),
-  // you might need to declare `passport: { user: any }` or similar, depending on what passport.serializeUser puts into the session.
-  // For our approach, we will manually save to req.session.user, so this might not be strictly needed if we don't use passport.session().
+if (!process.env.APP_SECRET || process.env.APP_SECRET.length < 32) {
+  console.warn(
+    'APP_SECRET environment variable is not set or is too short (must be at least 32 characters). Session security is compromised.'
+  );
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('APP_SECRET is not configured correctly for production.');
+  }
 }
 
-// This is where we specify the typings of req.session.*
-declare module 'iron-session' {
-  interface IronSessionData extends SessionData {} // Extend with our defined SessionData
+
+// Helper for App Router Route Handlers
+export async function getAppRouterSession(): Promise<IronSession<SessionData>> {
+  // cookies() from next/headers returns the store directly
+  const session = await getIronSession<SessionData>(cookies(), sessionOptions); 
+  return session;
 }
 
-// Helper to wrap API routes with iron-session
-// export function withSessionRoute(handler: NextApiHandler) {
-//   return withIronSessionApiRoute(handler, sessionOptions);
-// }
-
-// Helper to wrap SSR pages with iron-session
-// export function withSessionSsr<P extends { [key: string]: unknown } = { [key: string]: unknown }>(
-//   handler: (
-//     context: GetServerSidePropsContext,
-//   ) => GetServerSidePropsResult<P> | Promise<GetServerSidePropsResult<P>>,
-// ) {
-//   return withIronSessionSsr(handler, sessionOptions);
+// If you still have Pages Router API routes, you might use a wrapper like this:
+// import type { NextApiRequest, NextApiResponse } from 'next';
+// export function withSessionRoute(handler: (req: NextApiRequest & { session: IronSession<SessionData> }, res: NextApiResponse) => unknown | Promise<unknown>) {
+//   return async function (req: NextApiRequest, res: NextApiResponse) {
+//     const session = await getIronSession<SessionData>(req, res, sessionOptions);
+//     return handler({ ...req, session }, res);
+//   };
 // } 
