@@ -36,13 +36,13 @@ export async function POST(req: NextRequest) {
   // This might come from the session if a Facebook Login flow for content publishing
   // has been implemented and these details are stored.
   // For now, using placeholders. Replace with actual retrieval logic.
-  const graphApiAccessToken = session.instagramGraphApi?.graphApiAccessToken || process.env.PLACEHOLDER_INSTAGRAM_GRAPH_API_ACCESS_TOKEN;
-  const instagramUserId = session.instagramGraphApi?.instagramUserId || process.env.PLACEHOLDER_INSTAGRAM_USER_ID;
+  const graphApiAccessToken = session.instagramAccessToken;
+  const instagramUserId = session.instagramUserId;
 
   console.log("Retrieved graphApiAccessToken:", graphApiAccessToken);
   console.log("Retrieved instagramUserId:", instagramUserId);
-  console.log("Env PLACEHOLDER_INSTAGRAM_GRAPH_API_ACCESS_TOKEN:", process.env.PLACEHOLDER_INSTAGRAM_GRAPH_API_ACCESS_TOKEN);
-  console.log("Env PLACEHOLDER_INSTAGRAM_USER_ID:", process.env.PLACEHOLDER_INSTAGRAM_USER_ID);
+  // console.log("Env PLACEHOLDER_INSTAGRAM_GRAPH_API_ACCESS_TOKEN:", process.env.PLACEHOLDER_INSTAGRAM_GRAPH_API_ACCESS_TOKEN);
+  // console.log("Env PLACEHOLDER_INSTAGRAM_USER_ID:", process.env.PLACEHOLDER_INSTAGRAM_USER_ID);
 
   if (!graphApiAccessToken || !instagramUserId) {
     return NextResponse.json(
@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
 
     // Step 1: Create Media Container
     // Docs: https://developers.facebook.com/docs/instagram-platform/content-publishing#create-a-container
-    const createContainerUrl = `https://graph.facebook.com/v19.0/${instagramUserId}/media`; // Use latest stable API version
+    const createContainerUrl = `https://graph.instagram.com/v19.0/${instagramUserId}/media`; // Use latest stable API version
     
     const containerPayload: { image_url: string; caption?: string } = {
       image_url: imageUrl,
@@ -122,7 +122,7 @@ export async function POST(req: NextRequest) {
 
     // Step 2: Publish Media Container
     // Docs: https://developers.facebook.com/docs/instagram-platform/content-publishing#publish-the-container
-    const publishMediaUrl = `https://graph.facebook.com/v19.0/${instagramUserId}/media_publish`;
+    const publishMediaUrl = `https://graph.instagram.com/v19.0/${instagramUserId}/media_publish`;
     
     const publishPayload = {
       creation_id: creationId,

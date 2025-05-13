@@ -1,40 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAppRouterSession } from "@/lib/session";
+import { getAppRouterSession, sessionOptions } from "@/lib/session";
+import { sealData } from "iron-session";
 
 const INSTAGRAM_CLIENT_ID = process.env.INSTAGRAM_CLIENT_ID;
 const INSTAGRAM_CLIENT_SECRET = process.env.INSTAGRAM_CLIENT_SECRET;
 const INSTAGRAM_REDIRECT_URI = process.env.INSTAGRAM_REDIRECT_URI;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
-interface FacebookTokenResponse {
+// Changed: Interface for the Instagram Basic Display API token response
+interface InstagramTokenResponse {
   access_token: string;
-  token_type: string;
-  expires_in: number;
-}
-
-interface FacebookPageAccount {
-  access_token: string; // This is the Page Access Token
-  category: string;
-  name: string;
-  id: string; // This is the Page ID
-  tasks: string[];
-}
-
-interface FacebookAccountsResponse {
-  data: FacebookPageAccount[];
-  paging?: {
-    cursors: {
-      before: string;
-      after: string;
-    };
-  };
-}
-
-interface InstagramBusinessAccountResponse {
-  instagram_business_account?: {
-    id: string; // This is the Instagram Business Account ID (instagramUserId)
-  };
-  id: string; // Page ID
+  user_id: number; // This is the Instagram User ID
 }
 
 export async function GET(req: NextRequest) {
@@ -55,94 +31,71 @@ export async function GET(req: NextRequest) {
 
   if (state !== session.instagramOAuthState) {
     console.error("Invalid OAuth state (CSRF potential), stored:", session.instagramOAuthState, "received:", state);
-    // Clear the potentially compromised state
     session.instagramOAuthState = undefined;
-    await session.save();
-    return NextResponse.json({ error: "Invalid OAuth state. CSRF detected." }, { status: 403 });
+
+    // Manually seal and set cookie
+    const sealed = await sealData(session, {
+      password: sessionOptions.password,
+      ttl: sessionOptions.ttl,
+    });
+    const response = NextResponse.json({ error: "Invalid OAuth state. CSRF detected." }, { status: 403 });
+    response.cookies.set(sessionOptions.cookieName, sealed, sessionOptions.cookieOptions);
+    return response;
   }
 
-  // Clear the used state from session
   session.instagramOAuthState = undefined;
-  // We will save session later after storing tokens
 
   try {
-    // Step 1: Exchange code for a User Access Token
-    const tokenParams = new URLSearchParams({
-      client_id: INSTAGRAM_CLIENT_ID,
-      client_secret: INSTAGRAM_CLIENT_SECRET,
-      redirect_uri: INSTAGRAM_REDIRECT_URI,
-      code: code,
-      grant_type: "authorization_code", // This is for user access token
-    });
+    // Step 1: Exchange code for an Instagram User Access Token
+    const tokenFormData = new URLSearchParams();
+    tokenFormData.append('client_id', INSTAGRAM_CLIENT_ID);
+    tokenFormData.append('client_secret', INSTAGRAM_CLIENT_SECRET);
+    tokenFormData.append('grant_type', 'authorization_code');
+    tokenFormData.append('redirect_uri', INSTAGRAM_REDIRECT_URI);
+    tokenFormData.append('code', code);
 
-    const tokenResponse = await fetch(`https://graph.facebook.com/v19.0/oauth/access_token?${tokenParams.toString()}`, {
-      method: "POST",
-    });
+    const tokenResponse = await fetch(
+      "https://api.instagram.com/oauth/access_token",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: tokenFormData,
+      }
+    );
 
     if (!tokenResponse.ok) {
       const errorBody = await tokenResponse.json().catch(() => ({ message: "Unknown error fetching user token" }));
-      console.error("Error fetching Facebook user access token:", errorBody);
-      return NextResponse.json({ error: `Failed to get access token: ${errorBody.error?.message || errorBody.message}` }, { status: tokenResponse.status });
+      console.error("Error fetching Instagram user access token:", errorBody);
+      // Instagram API often returns error details in errorBody.error_type, errorBody.code, errorBody.error_message
+      const errorMessage = errorBody.error_message || errorBody.message || "Failed to get access token";
+      return NextResponse.json({ error: `Failed to get access token: ${errorMessage}` }, { status: tokenResponse.status });
     }
 
-    const { access_token: userAccessToken } = await tokenResponse.json() as FacebookTokenResponse;
-    if (!userAccessToken) {
-      console.error("User Access Token not found in response from Facebook");
-      return NextResponse.json({ error: "Failed to retrieve user access token." }, { status: 500 });
+    const { access_token: userAccessToken, user_id: instagramUserId } = await tokenResponse.json() as InstagramTokenResponse;
+
+    if (!userAccessToken || !instagramUserId) {
+      console.error("User Access Token or User ID not found in response from Instagram");
+      return NextResponse.json({ error: "Failed to retrieve user access token or user ID." }, { status: 500 });
     }
 
-    // Step 2: Get the list of Pages the user manages (this includes Page Access Tokens)
-    const accountsResponse = await fetch(`https://graph.facebook.com/me/accounts?access_token=${userAccessToken}`);
-    if (!accountsResponse.ok) {
-      const errorBody = await accountsResponse.json().catch(() => ({ message: "Unknown error fetching accounts" }));
-      console.error("Error fetching Facebook accounts/pages:", errorBody);
-      return NextResponse.json({ error: `Failed to get user pages: ${errorBody.error?.message || errorBody.message}` }, { status: accountsResponse.status });
-    }
-    const accountsData = await accountsResponse.json() as FacebookAccountsResponse;
+    // Store the Instagram User Access Token and Instagram User ID in session
+    // Ensure session object structure is updated accordingly in your session library if needed
+    session.instagramAccessToken = userAccessToken;
+    session.instagramUserId = instagramUserId.toString(); // Store as string for consistency
+    
+    session.isLoggedIn = true;
 
-    if (!accountsData.data || accountsData.data.length === 0) {
-      return NextResponse.json({ error: "No Facebook Pages found for this user or insufficient permissions." }, { status: 404 });
-    }
+    // Manually seal and set cookie for success path
+    const sealedFinalSession = await sealData(session, {
+      password: sessionOptions.password,
+      ttl: sessionOptions.ttl,
+    });
 
-    // Step 3: Find a Page with an Instagram Business Account and get its ID and Page Access Token
-    let foundPageAccessToken: string | undefined;
-    let foundInstagramUserId: string | undefined;
-    let foundPageId: string | undefined;
-
-    for (const page of accountsData.data) {
-      // Ensure the page permissions allow Instagram posting (usually "CREATE_CONTENT", "MANAGE", "MODERATE" under tasks)
-      // For simplicity, we'll try to get the instagram_business_account for the first page that has one.
-      // You might want a UI for the user to select which page/IG account if they have multiple.
-      const igAccountResponse = await fetch(`https://graph.facebook.com/v19.0/${page.id}?fields=instagram_business_account&access_token=${page.access_token}`);
-      
-      if (igAccountResponse.ok) {
-        const igAccountData = await igAccountResponse.json() as InstagramBusinessAccountResponse;
-        if (igAccountData.instagram_business_account?.id) {
-          foundPageAccessToken = page.access_token; // This is the Page Access Token for the page connected to IG
-          foundInstagramUserId = igAccountData.instagram_business_account.id;
-          foundPageId = page.id;
-          break; // Found what we need
-        }
-      } else {
-        console.warn(`Could not fetch Instagram account for page ${page.id} (${page.name}), status: ${igAccountResponse.status}`);
-      }
-    }
-
-    if (!foundPageAccessToken || !foundInstagramUserId) {
-      return NextResponse.json({ error: "Could not find an Instagram Business Account connected to any of the user's Facebook Pages, or insufficient permissions." }, { status: 404 });
-    }
-
-    // Store the Page Access Token (as graphApiAccessToken) and Instagram User ID in session
-    session.instagramGraphApi = {
-      graphApiAccessToken: foundPageAccessToken,
-      instagramUserId: foundInstagramUserId,
-      pageId: foundPageId,
-    };
-    session.isLoggedIn = true; // Mark user as logged in via Instagram
-    await session.save();
-
-    // Redirect to a success page or dashboard
-    return NextResponse.redirect(`${APP_URL}/dashboard?instagram_linked=true`); // Adjust redirect as needed
+    const redirectResponse = NextResponse.redirect(`${APP_URL}/dashboard?instagram_linked=true`);
+    redirectResponse.cookies.set(sessionOptions.cookieName, sealedFinalSession, sessionOptions.cookieOptions);
+    return redirectResponse;
   } catch (error) {
     console.error("Error in Instagram OAuth callback:", error);
     const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
