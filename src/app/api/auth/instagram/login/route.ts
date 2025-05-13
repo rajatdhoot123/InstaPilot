@@ -3,10 +3,10 @@ import { NextResponse } from "next/server";
 // import passport from "@/lib/passport";
 // AuthenticateOptions will be removed as passport.authenticate is not called this way anymore
 // import type { AuthenticateOptions } from "passport";
-import { getAppRouterSession } from '@/lib/session';
+import { getAppRouterSession } from "@/lib/session";
 // SessionData type from @/lib/session might be needed if we were to type the session object explicitly here,
 // but getAppRouterSession() already returns a typed session object.
-import { randomBytes } from 'crypto';
+import { randomBytes } from "crypto";
 
 // The MockResAdapter interface is no longer needed
 // interface MockResAdapter { ... }
@@ -17,9 +17,11 @@ export async function GET() {
   const INSTAGRAM_REDIRECT_URI = process.env.INSTAGRAM_REDIRECT_URI;
 
   if (!INSTAGRAM_CLIENT_ID || !INSTAGRAM_REDIRECT_URI) {
-    console.error('Missing Instagram OAuth environment variables: INSTAGRAM_CLIENT_ID or INSTAGRAM_REDIRECT_URI');
+    console.error(
+      "Missing Instagram OAuth environment variables: INSTAGRAM_CLIENT_ID or INSTAGRAM_REDIRECT_URI"
+    );
     return NextResponse.json(
-      { error: 'Server configuration error for Instagram OAuth.' },
+      { error: "Server configuration error for Instagram OAuth." },
       { status: 500 }
     );
   }
@@ -27,33 +29,26 @@ export async function GET() {
   const session = await getAppRouterSession();
 
   // Generate a random state for CSRF protection
-  const state = randomBytes(16).toString('hex');
+  const state = randomBytes(16).toString("hex");
   session.instagramOAuthState = state;
   await session.save();
 
   const scopes = [
-    'user_profile',       // Required by Facebook Login, gives access to basic user profile info
-    // 'user_media',      // For Instagram Basic Display API - to read user's media. Might not be needed if only publishing.
-    'instagram_basic',    // Access to the Instagram Graph API User node
-    'pages_show_list',    // To list all Pages the user manages
-    'instagram_content_publish', // To publish media to Instagram
-    'business_management',// To manage business assets, often needed for Page-related permissions
-    'pages_read_engagement',// To read Page content, posts, comments, etc.
-    // Add other scopes like instagram_manage_comments, instagram_manage_insights if needed
+    "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish,instagram_business_manage_insights",
   ];
 
   const params = new URLSearchParams({
     client_id: INSTAGRAM_CLIENT_ID,
     redirect_uri: INSTAGRAM_REDIRECT_URI,
-    scope: scopes.join(','), // Scopes are comma-separated for Facebook OAuth
-    response_type: 'code',
+    scope: scopes.join(","), // Scopes are comma-separated for Facebook OAuth
+    response_type: "code",
     state: state,
   });
 
   // Authorization URL for Facebook Login, which grants permissions for Instagram Graph API
   // const authorizationUrl = `https://www.facebook.com/v19.0/dialog/oauth?${params.toString()}`;
   const authorizationUrl = `https://api.instagram.com/oauth/authorize?${params.toString()}`;
-  
+
   // console.log('Redirecting to Facebook OAuth for Instagram permissions:', authorizationUrl);
 
   return NextResponse.redirect(authorizationUrl);
