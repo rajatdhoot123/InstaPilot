@@ -3,18 +3,22 @@ import { getIronSession } from "iron-session";
 import { sessionOptions } from "@/lib/session"; // Assuming session management is similar
 import { cookies } from "next/headers";
 
-// Placeholder for session data structure for Instagram Graph API
-// This would ideally store the Graph API access token and IG User ID
-interface InstagramGraphApiSessionData {
-  graphApiAccessToken?: string;
-  instagramUserId?: string; // This is the Instagram Professional Account ID
-  // other relevant user details
+// Define the structure of the Instagram credentials as stored in your database
+// This is a conceptual type; actual implementation depends on your DB schema
+interface UserInstagramCredentials {
+  instagramUserId: string;
+  longLivedAccessToken: string;
+  accessTokenExpiresAt?: Date | number; // Optional: useful for refresh logic
 }
 
-// Adjust SessionData if needed, or use a more specific type for this route
+// Your application's session data
 type SessionData = {
-  user?: unknown; // Keep existing user session structure if needed
-  instagramGraphApi?: InstagramGraphApiSessionData;
+  currentUser?: {
+    id: string; // Your application's internal user ID
+    // other app-specific user details
+  };
+  // We will NO LONGER store instagramAccessToken or instagramUserId directly here
+  // for a multi-user setup. That data will be fetched from your database.
   [key: string]: unknown;
 };
 
@@ -23,6 +27,41 @@ interface PostRequestBody {
   caption?: string;
 }
 
+// Conceptual function to fetch Instagram credentials from your database
+// You would implement this using your database client (e.g., Prisma, Supabase, etc.)
+async function getInstagramCredentialsForUser(
+  applicationUserId: string
+): Promise<UserInstagramCredentials | null> {
+  console.log(
+    `Attempting to fetch Instagram credentials for application user ID: ${applicationUserId}`
+  );
+  // TODO: Replace this with actual database lookup logic
+  // Example:
+  // const credentials = await db.userInstagramConnections.findUnique({
+  //   where: { applicationUserId },
+  //   select: { instagramUserId: true, longLivedAccessToken: true, accessTokenExpiresAt: true },
+  // });
+  // if (credentials && new Date(credentials.accessTokenExpiresAt) > new Date()) { // Check expiry
+  //   return credentials;
+  // }
+  // If token is expired, you might trigger a refresh flow here or return null.
+  // For this example, we'll return a placeholder.
+  // In a real app, if credentials are not found or expired, the user needs to (re)connect.
+
+  // Placeholder: Simulating fetching credentials.
+  // Replace with your actual database logic.
+  if (applicationUserId === "user123-from-session") { // Example user ID
+    return {
+      // These would come from your DB, stored after OAuth
+      instagramUserId: process.env.PLACEHOLDER_INSTAGRAM_USER_ID || "default_ig_user_id_from_db",
+      longLivedAccessToken: process.env.PLACEHOLDER_INSTAGRAM_GRAPH_API_ACCESS_TOKEN || "default_long_lived_token_from_db",
+      // accessTokenExpiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000) // e.g., 60 days from now
+    };
+  }
+  return null;
+}
+
+
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies();
   const session = await getIronSession<SessionData>(
@@ -30,29 +69,35 @@ export async function POST(req: NextRequest) {
     sessionOptions
   );
 
-  console.log("Session data:", JSON.stringify(session, null, 2));
+  console.log("Current session:", JSON.stringify(session, null, 2));
 
-  // TODO: Securely retrieve the Instagram Graph API access token and IG User ID.
-  // This might come from the session if a Facebook Login flow for content publishing
-  // has been implemented and these details are stored.
-  // For now, using placeholders. Replace with actual retrieval logic.
-  const graphApiAccessToken = session.instagramAccessToken;
-  const instagramUserId = session.instagramUserId;
-
-  console.log("Retrieved graphApiAccessToken:", graphApiAccessToken);
-  console.log("Retrieved instagramUserId:", instagramUserId);
-  // console.log("Env PLACEHOLDER_INSTAGRAM_GRAPH_API_ACCESS_TOKEN:", process.env.PLACEHOLDER_INSTAGRAM_GRAPH_API_ACCESS_TOKEN);
-  // console.log("Env PLACEHOLDER_INSTAGRAM_USER_ID:", process.env.PLACEHOLDER_INSTAGRAM_USER_ID);
-
-  if (!graphApiAccessToken || !instagramUserId) {
+  if (!session.currentUser?.id) {
     return NextResponse.json(
       {
         error:
-          "Instagram Graph API credentials not found. Please ensure you have authenticated with Facebook and granted necessary permissions.",
+          "User not authenticated in the application. Please log in.",
       },
       { status: 401 }
     );
   }
+  const applicationUserId = session.currentUser.id;
+
+  // Fetch Instagram credentials for the currently logged-in application user
+  const userCredentials = await getInstagramCredentialsForUser(applicationUserId);
+
+  if (!userCredentials) {
+    return NextResponse.json(
+      {
+        error:
+          "Instagram account not connected or credentials expired for this user. Please connect or re-authorize your Instagram account through your profile settings.",
+      },
+      { status: 403 } // 403 Forbidden or 401 Unauthorized might be appropriate
+    );
+  }
+
+  const { longLivedAccessToken: graphApiAccessToken, instagramUserId } = userCredentials;
+
+  console.log(`Using Instagram User ID: ${instagramUserId} for app user: ${applicationUserId}`);
 
   try {
     const body: PostRequestBody = await req.json();
@@ -65,7 +110,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Validate imageUrl format (basic check)
     try {
       new URL(imageUrl);
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -80,18 +124,28 @@ export async function POST(req: NextRequest) {
     // Docs: https://developers.facebook.com/docs/instagram-platform/content-publishing#create-a-container
     const createContainerUrl = `https://graph.instagram.com/v19.0/${instagramUserId}/media`; // Use latest stable API version
     
-    const containerPayload: { image_url: string; caption?: string } = {
+    const containerPayload: { image_url: string; caption?: string; access_token: string } = {
       image_url: imageUrl,
+      access_token: graphApiAccessToken, // Token can also be sent as a query param
     };
     if (caption) {
       containerPayload.caption = caption;
     }
 
+    // Note: Instagram API sometimes prefers access_token in the payload for POST media.
+    // Alternatively, it can be in the Authorization header. The docs show examples with it in payload for /media.
+    // For /media_publish, Authorization header is standard.
+    // For consistency and to avoid issues, let's ensure Authorization header is also set correctly if needed,
+    // but for /media, the token in payload is a common pattern.
+
+    console.log("Creating media container with payload:", { imageUrl: containerPayload.image_url, caption: containerPayload.caption }); // Don't log token
+
     const containerResponse = await fetch(createContainerUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${graphApiAccessToken}`,
+        // Authorization header might not be strictly needed if token is in payload for this specific call
+        // "Authorization": `Bearer ${graphApiAccessToken}`,
       },
       body: JSON.stringify(containerPayload),
     });
@@ -101,6 +155,8 @@ export async function POST(req: NextRequest) {
         error: { message: "Failed to create media container and couldn't parse error response." },
       }));
       console.error("Error creating media container:", errorBody);
+      // TODO: Implement token refresh logic if error indicates an expired/invalid token
+      // e.g., if (errorBody.error?.code === 190 || (errorBody.error?.error_subcode === 463 || errorBody.error?.error_subcode === 467) ) { /* User token expired, needs re-auth or refresh */ }
       return NextResponse.json(
         {
           error: `Failed to create media container. Status: ${containerResponse.status}. Message: ${errorBody.error?.message || JSON.stringify(errorBody)}`,
@@ -119,6 +175,7 @@ export async function POST(req: NextRequest) {
         { status: 500 }
       );
     }
+    console.log(`Media container created with ID: ${creationId}`);
 
     // Step 2: Publish Media Container
     // Docs: https://developers.facebook.com/docs/instagram-platform/content-publishing#publish-the-container
@@ -126,13 +183,16 @@ export async function POST(req: NextRequest) {
     
     const publishPayload = {
       creation_id: creationId,
+      access_token: graphApiAccessToken, // Token can also be sent as a query param for this call
     };
+
+    console.log("Publishing media with creation ID:", creationId);
 
     const publishResponse = await fetch(publishMediaUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${graphApiAccessToken}`,
+         // "Authorization": `Bearer ${graphApiAccessToken}`, // Or include access_token in body
       },
       body: JSON.stringify(publishPayload),
     });
@@ -142,8 +202,8 @@ export async function POST(req: NextRequest) {
         error: { message: "Failed to publish media and couldn't parse error response." },
       }));
       console.error("Error publishing media:", errorBody);
-      // It might be useful to check the status of the container if publishing fails
-      // GET /{ig-container-id}?fields=status_code
+      // TODO: Implement token refresh logic if error indicates an expired/invalid token
+      // e.g., if (errorBody.error?.code === 190 || (errorBody.error?.error_subcode === 463 || errorBody.error?.error_subcode === 467) ) { /* User token expired, needs re-auth or refresh */ }
       return NextResponse.json(
         {
           error: `Failed to publish media. Status: ${publishResponse.status}. Message: ${errorBody.error?.message || JSON.stringify(errorBody)}`,
@@ -154,6 +214,7 @@ export async function POST(req: NextRequest) {
     }
 
     const publishData = await publishResponse.json();
+    console.log("Media published successfully:", publishData);
 
     return NextResponse.json(
       {

@@ -1,4 +1,4 @@
-import { timestamp, pgTable, text, primaryKey, integer } from "drizzle-orm/pg-core";
+import { timestamp, pgTable, text, primaryKey, integer, uuid, varchar } from "drizzle-orm/pg-core";
 import type { AdapterAccount } from "@auth/core/adapters";
 
 // Existing instagramAccounts table is removed as NextAuth's `accounts` table will handle this.
@@ -61,4 +61,13 @@ export const verificationTokens = pgTable(
 //   userId: text("userId").notNull().references(() => users.id, { onDelete: "cascade" }).primaryKey(),
 //   someSpecificIgField: text("specific_ig_field"),
 //   // ... other fields
-// }); 
+// });
+
+export const instagramConnections = pgTable("instagram_connections", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  instagramUserId: varchar("instagram_user_id", { length: 255 }).notNull().unique(),
+  longLivedAccessToken: varchar("long_lived_access_token", { length: 512 }).notNull(),
+  accessTokenExpiresAt: timestamp("access_token_expires_at", { mode: "date", withTimezone: true }),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),
+}); 

@@ -1,0 +1,1 @@
+ALTER TABLE "instagram_connections" DROP COLUMN "application_user_id";

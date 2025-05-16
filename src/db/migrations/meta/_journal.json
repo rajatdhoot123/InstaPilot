@@ -8,6 +8,20 @@
       "when": 1747109850074,
       "tag": "0000_cuddly_wildside",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1747390551477,
+      "tag": "0001_slimy_captain_midlands",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1747395153600,
+      "tag": "0002_brave_stepford_cuckoos",
+      "breakpoints": true
     }
   ]
 }

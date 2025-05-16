@@ -11,6 +11,8 @@ if (!process.env.DATABASE_URL) {
 
 const connectionString = process.env.DATABASE_URL;
 
+
+console.log("connectionString", connectionString);
 // Disable prefetch as it is not supported for "Transaction" pool mode
 // TODO: Use `@neondatabase/serverless` driver for Vercel edge functions
 const client = postgres(connectionString, { prepare: false })
