@@ -1,3 +1,5 @@
+import "@/globals.css";
+
 export const metadata = {
   title: "Instagram Integrations",
   description: "Connect and manage your Instagram accounts",

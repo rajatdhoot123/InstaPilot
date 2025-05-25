@@ -42,7 +42,7 @@ export default async function DashboardPage() {
   }
 
   const userName = session.user.name || session.user.email || "User";
-  const instagramAuthUrl = "/api/auth/instagram"; // Your backend endpoint to initiate Instagram OAuth
+  const instagramAuthUrl = "/api/auth/instagram/login"; // Your backend endpoint to initiate Instagram OAuth
 
   return (
     <div className="container mx-auto p-4">
