@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { instagramConnections } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import Link from "next/link";
 
 interface ConnectedInstagramAccount {
   id: string; // connection id
@@ -76,12 +75,12 @@ export default async function DashboardPage() {
             You have not connected your Instagram account yet.
           </p>
         )}
-        <Link 
+        <a 
           href={instagramAuthUrl} 
           className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-3 px-6 rounded-lg inline-block transition-all duration-200 shadow-lg hover:shadow-xl"
         >
           Connect Instagram Account
-        </Link>
+        </a>
       </section>
 
       {fetchError && (
