@@ -1,7 +1,7 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
-import { db } from "./src/lib/db";
+import { db } from "./lib/db";
 
 console.log(process.env.GOOGLE_CLIENT_ID);
 console.log(process.env.GOOGLE_CLIENT_SECRET);

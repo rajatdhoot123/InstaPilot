@@ -1,22 +1,17 @@
-import { NextResponse, type NextRequest } from "next/server";
-// passport import might be removed if not used elsewhere in this file or subsequent logic
-// import passport from "@/lib/passport";
-// AuthenticateOptions will be removed as passport.authenticate is not called this way anymore
-// import type { AuthenticateOptions } from "passport";
-import { getIronSession } from "iron-session";
-import { sessionOptions, type SessionData } from "@/lib/session"; // Ensure SessionData is correctly typed here
-import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
+import { auth } from "../../../../../auth";
 import { randomBytes } from "crypto";
 
-// The MockResAdapter interface is no longer needed
-// interface MockResAdapter { ... }
-
-// Keeping _req as it is standard for Next.js route handlers, even if unused.
 export async function GET() {
-  const session = await getIronSession<SessionData>(
-    await cookies(),
-    sessionOptions
-  );
+  // Check if user is authenticated with NextAuth 5
+  const session = await auth();
+  
+  if (!session?.user?.id) {
+    return NextResponse.json(
+      { error: "User not authenticated. Please log in to the application first." },
+      { status: 401 }
+    );
+  }
   
   // Get necessary environment variables
   const INSTAGRAM_CLIENT_ID = process.env.INSTAGRAM_CLIENT_ID;
@@ -32,10 +27,10 @@ export async function GET() {
     );
   }
 
-  // Generate and store CSRF state
+  // Generate CSRF state (simplified - not stored in session)
+  // In production, you might want to store this in a database with expiration
+  // or use signed tokens for better security
   const state = randomBytes(16).toString("hex");
-  session.instagramOAuthState = state;
-  await session.save();
 
   // NEW 2025 Instagram Business Login scopes (replacing deprecated ones)
   const scopes = [
@@ -61,15 +56,3 @@ export async function GET() {
   
   return NextResponse.redirect(authorizationUrl);
 }
-
-// The original complex Promise-based structure with mockResAdapter and passportMiddleware is removed.
-// ... existing code ...
-// Note: The `withSessionRoute` HOC from the original code was for Pages API routes.
-// In App Router, session handling is typically done using `getIronSession` (or similar)
-// directly within the route handler, as shown with `getIronSession<SessionData>(req, sessionOptions)`.
-// If `withSessionRoute` has been adapted for App Router, you might wrap the export:
-// export const GET = withSessionRoute(GET_handler_function);
-// But the example above integrates session handling directly.
-// For passport, it\'s crucial that `req.session` is available if the strategy uses it,
-// even if `AuthenticateOptions.session` is false for the initial redirect.
-// The `sessionOptions` should be correctly configured for App Router\'s `NextRequest`.

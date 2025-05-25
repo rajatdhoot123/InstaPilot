@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getIronSession } from "iron-session";
-import { sessionOptions, type SessionData } from "@/lib/session";
-import { cookies } from "next/headers";
+import { auth } from "../../../../auth";
 import { getValidInstagramToken } from "@/lib/instagram-refresh";
 import { db } from "@/lib/db";
 import { instagramConnections } from "@/db/schema";
@@ -74,15 +72,12 @@ async function getInstagramCredentialsForUser(
 }
 
 export async function POST(req: NextRequest) {
-  const cookieStore = await cookies();
-  const session = await getIronSession<SessionData>(
-    cookieStore,
-    sessionOptions
-  );
+  // Use NextAuth 5 for authentication instead of iron-session
+  const session = await auth();
 
-  console.log("Instagram Business post request - session user:", session.appUser?.id);
+  console.log("Instagram Business post request - authenticated user:", session?.user?.id);
 
-  if (!session.appUser?.id) {
+  if (!session?.user?.id) {
     return NextResponse.json(
       {
         error: "User not authenticated in the application. Please log in.",
@@ -91,7 +86,7 @@ export async function POST(req: NextRequest) {
     );
   }
   
-  const applicationUserId = session.appUser.id;
+  const applicationUserId = session.user.id;
 
   try {
     const body: PostRequestBody = await req.json();

@@ -1,4 +1,4 @@
-import { auth, signOut } from "../../../auth";
+import { auth, signOut } from "../../auth";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { instagramConnections } from "@/db/schema";

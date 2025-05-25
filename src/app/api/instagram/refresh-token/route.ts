@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getIronSession } from "iron-session";
-import { sessionOptions, type SessionData } from "@/lib/session";
-import { cookies } from "next/headers";
+import { auth } from "../../../../auth";
 import { refreshInstagramToken } from "@/lib/instagram-refresh";
 import { db } from "@/lib/db";
 import { instagramConnections } from "@/db/schema";
@@ -9,12 +7,10 @@ import { eq } from "drizzle-orm";
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getIronSession<SessionData>(
-      await cookies(),
-      sessionOptions
-    );
+    // Use NextAuth 5 for authentication instead of iron-session
+    const session = await auth();
 
-    const appUserSystemId = session.appUser?.id;
+    const appUserSystemId = session?.user?.id;
 
     if (!appUserSystemId) {
       return NextResponse.json(
@@ -88,12 +84,10 @@ export async function POST(req: NextRequest) {
 // GET endpoint to check token status
 export async function GET(req: NextRequest) {
   try {
-    const session = await getIronSession<SessionData>(
-      await cookies(),
-      sessionOptions
-    );
+    // Use NextAuth 5 for authentication instead of iron-session
+    const session = await auth();
 
-    const appUserSystemId = session.appUser?.id;
+    const appUserSystemId = session?.user?.id;
 
     if (!appUserSystemId) {
       return NextResponse.json(
