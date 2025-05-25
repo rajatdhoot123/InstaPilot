@@ -13,12 +13,26 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
 // NEW: Instagram Business Login response format (2025)
 interface InstagramBusinessTokenResponse {
-  data: [{
-    access_token: string;
-    user_id: string; // Instagram-scoped user ID
-    permissions: string; // Comma-separated permissions
-  }];
+  data: [
+    {
+      access_token: string;
+      user_id: string; // Instagram-scoped user ID
+      permissions: string; // Comma-separated permissions
+    }
+  ];
 }
+
+// Alternative Instagram token response format (direct format)
+interface InstagramDirectTokenResponse {
+  access_token: string;
+  user_id: string;
+  permissions?: string | string[]; // Can be string or array
+}
+
+// Union type for all possible Instagram token response formats
+type InstagramTokenResponse =
+  | InstagramBusinessTokenResponse
+  | InstagramDirectTokenResponse;
 
 interface InstagramLongLivedTokenResponse {
   access_token: string;
@@ -41,10 +55,15 @@ export async function GET(req: NextRequest) {
   const code = searchParams.get("code");
   const receivedState = searchParams.get("state");
 
-  console.log("Instagram Business Login callback - session before auth processing:", session);
+  console.log(
+    "Instagram Business Login callback - session before auth processing:",
+    session
+  );
 
   if (!code || !receivedState) {
-    console.error("Missing code or state in Instagram Business Login callback.");
+    console.error(
+      "Missing code or state in Instagram Business Login callback."
+    );
     return NextResponse.json(
       { error: "Invalid OAuth callback parameters." },
       { status: 400 }
@@ -105,14 +124,65 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // NEW: Handle Instagram Business Login response format
-    const tokenResponseData = await shortLivedTokenResponse.json() as InstagramBusinessTokenResponse;
-    const { access_token: shortLivedUserAccessToken, user_id: instagramUserId, permissions } = tokenResponseData.data[0];
+    // NEW: Handle Instagram Business Login response format (2025)
+    const tokenResponseData =
+      (await shortLivedTokenResponse.json()) as InstagramTokenResponse;
+    console.log(
+      "Instagram Business Login - Token response data:",
+      tokenResponseData
+    );
+
+    // Handle different response formats from Instagram API
+    let shortLivedUserAccessToken: string;
+    let instagramUserId: string;
+    let permissions: string;
+
+    // Type guard to check if it's the business format
+    if (
+      "data" in tokenResponseData &&
+      Array.isArray(tokenResponseData.data) &&
+      tokenResponseData.data.length > 0
+    ) {
+      // New Instagram Business Login format
+      const businessResponse =
+        tokenResponseData as InstagramBusinessTokenResponse;
+      ({
+        access_token: shortLivedUserAccessToken,
+        user_id: instagramUserId,
+        permissions,
+      } = businessResponse.data[0]);
+    } else if (
+      "access_token" in tokenResponseData &&
+      "user_id" in tokenResponseData
+    ) {
+      // Direct format (fallback)
+      const directResponse = tokenResponseData as InstagramDirectTokenResponse;
+      shortLivedUserAccessToken = directResponse.access_token;
+      instagramUserId = directResponse.user_id;
+      // Handle permissions as either string or array
+      if (Array.isArray(directResponse.permissions)) {
+        permissions = directResponse.permissions.join(",");
+      } else {
+        permissions = directResponse.permissions || "";
+      }
+    } else {
+      console.error(
+        "Unexpected Instagram token response format:",
+        tokenResponseData
+      );
+      await session.save();
+      return NextResponse.json(
+        {
+          error: "Unexpected response format from Instagram API",
+        },
+        { status: 500 }
+      );
+    }
 
     console.log("Instagram Business Login - Permissions granted:", permissions);
     console.log("Instagram Business Login - User ID:", instagramUserId);
 
-    // Step 2: Exchange short-lived token for a long-lived token
+    // Step 2: Exchange short-lived token for a long-lived token (using GET)
     const longLivedTokenRes = await fetch(
       `https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${INSTAGRAM_CLIENT_SECRET!}&access_token=${shortLivedUserAccessToken}`
     );
@@ -135,7 +205,7 @@ export async function GET(req: NextRequest) {
         { status: longLivedTokenRes.status }
       );
     }
-    
+
     const { access_token: longLivedAccessToken, expires_in } =
       (await longLivedTokenRes.json()) as InstagramLongLivedTokenResponse;
     const accessTokenExpiresAt = new Date(Date.now() + expires_in * 1000);
@@ -149,7 +219,10 @@ export async function GET(req: NextRequest) {
       const errorBody = await meResponse.json().catch(() => ({
         message: "Unknown error fetching Instagram Business profile (/me)",
       }));
-      console.error("Error fetching Instagram Business profile (/me):", errorBody);
+      console.error(
+        "Error fetching Instagram Business profile (/me):",
+        errorBody
+      );
       await session.save();
       return NextResponse.json(
         {
@@ -160,7 +233,7 @@ export async function GET(req: NextRequest) {
         { status: meResponse.status }
       );
     }
-    
+
     const meData = (await meResponse.json()) as InstagramMeResponse;
     const instagramBusinessAccountId = meData.id;
     const instagramUsername = meData.username;
@@ -170,8 +243,9 @@ export async function GET(req: NextRequest) {
     console.log("Account Type:", meData.account_type);
 
     // Step 4: Determine Application User ID and Store/Update credentials
-    const appUserSystemId = session.appUser?.id; 
+    const appUserSystemId = session.appUser?.id;
 
+    console.log("App User System ID:", appUserSystemId);
     if (!appUserSystemId) {
       console.error(
         "No application user ID found in session during Instagram Business callback. Cannot link account."
@@ -216,12 +290,17 @@ export async function GET(req: NextRequest) {
     await session.save();
 
     const redirectResponse = NextResponse.redirect(
-      `${APP_URL}/dashboard?instagram_business_linked=true&user=${appUserSystemId}&account_type=${meData.account_type || 'BUSINESS'}`
+      `${APP_URL}/dashboard?instagram_business_linked=true&user=${appUserSystemId}&account_type=${
+        meData.account_type || "BUSINESS"
+      }`
     );
-    
+
     return redirectResponse;
   } catch (error) {
-    console.error("Error in Instagram Business Login callback processing:", error);
+    console.error(
+      "Error in Instagram Business Login callback processing:",
+      error
+    );
     if (session.instagramOAuthState) {
       session.instagramOAuthState = undefined;
     }
@@ -231,7 +310,9 @@ export async function GET(req: NextRequest) {
     try {
       await session.save();
       const errorResponse = NextResponse.json(
-        { error: `Instagram Business Login callback processing error: ${errorMessage}` },
+        {
+          error: `Instagram Business Login callback processing error: ${errorMessage}`,
+        },
         { status: 500 }
       );
       return errorResponse;
