@@ -25,20 +25,22 @@ async function getInstagramCredentialsForUser(
   );
 
   try {
-    let whereCondition = eq(instagramConnections.appUserId, applicationUserId);
-
-    if (specificInstagramUserId) {
-      whereCondition = and(
-        eq(instagramConnections.appUserId, applicationUserId),
-        eq(instagramConnections.instagramUserId, specificInstagramUserId)
-      );
-    }
-
-    const connections = await db
-      .select()
-      .from(instagramConnections)
-      .where(whereCondition)
-      .limit(1);
+    const connections = specificInstagramUserId
+      ? await db
+          .select()
+          .from(instagramConnections)
+          .where(
+            and(
+              eq(instagramConnections.appUserId, applicationUserId),
+              eq(instagramConnections.instagramUserId, specificInstagramUserId)
+            )
+          )
+          .limit(1)
+      : await db
+          .select()
+          .from(instagramConnections)
+          .where(eq(instagramConnections.appUserId, applicationUserId))
+          .limit(1);
 
     if (!connections.length) {
       console.log("No Instagram connections found for user");
