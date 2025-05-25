@@ -1,66 +1,75 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getIronSession } from "iron-session";
-import { sessionOptions } from "@/lib/session"; // Assuming session management is similar
+import { sessionOptions, type SessionData } from "@/lib/session";
 import { cookies } from "next/headers";
-
-// Define the structure of the Instagram credentials as stored in your database
-// This is a conceptual type; actual implementation depends on your DB schema
-interface UserInstagramCredentials {
-  instagramUserId: string;
-  longLivedAccessToken: string;
-  accessTokenExpiresAt?: Date | number; // Optional: useful for refresh logic
-}
-
-// Your application's session data
-type SessionData = {
-  currentUser?: {
-    id: string; // Your application's internal user ID
-    // other app-specific user details
-  };
-  // We will NO LONGER store instagramAccessToken or instagramUserId directly here
-  // for a multi-user setup. That data will be fetched from your database.
-  [key: string]: unknown;
-};
+import { getValidInstagramToken } from "@/lib/instagram-refresh";
+import { db } from "@/lib/db";
+import { instagramConnections } from "@/db/schema";
+import { eq, and } from "drizzle-orm";
 
 interface PostRequestBody {
   imageUrl: string; // Publicly accessible URL of the JPEG image
   caption?: string;
+  instagramUserId?: string; // Optional: specify which Instagram account to use
 }
 
-// Conceptual function to fetch Instagram credentials from your database
-// You would implement this using your database client (e.g., Prisma, Supabase, etc.)
+// Get Instagram credentials for the authenticated user
 async function getInstagramCredentialsForUser(
-  applicationUserId: string
-): Promise<UserInstagramCredentials | null> {
+  applicationUserId: string,
+  specificInstagramUserId?: string
+): Promise<{ instagramUserId: string; longLivedAccessToken: string } | null> {
   console.log(
-    `Attempting to fetch Instagram credentials for application user ID: ${applicationUserId}`
+    `Fetching Instagram credentials for app user ID: ${applicationUserId}${
+      specificInstagramUserId ? `, Instagram user: ${specificInstagramUserId}` : ''
+    }`
   );
-  // TODO: Replace this with actual database lookup logic
-  // Example:
-  // const credentials = await db.userInstagramConnections.findUnique({
-  //   where: { applicationUserId },
-  //   select: { instagramUserId: true, longLivedAccessToken: true, accessTokenExpiresAt: true },
-  // });
-  // if (credentials && new Date(credentials.accessTokenExpiresAt) > new Date()) { // Check expiry
-  //   return credentials;
-  // }
-  // If token is expired, you might trigger a refresh flow here or return null.
-  // For this example, we'll return a placeholder.
-  // In a real app, if credentials are not found or expired, the user needs to (re)connect.
 
-  // Placeholder: Simulating fetching credentials.
-  // Replace with your actual database logic.
-  if (applicationUserId === "user123-from-session") { // Example user ID
+  try {
+    let whereCondition = eq(instagramConnections.appUserId, applicationUserId);
+
+    if (specificInstagramUserId) {
+      whereCondition = and(
+        eq(instagramConnections.appUserId, applicationUserId),
+        eq(instagramConnections.instagramUserId, specificInstagramUserId)
+      );
+    }
+
+    const connections = await db
+      .select()
+      .from(instagramConnections)
+      .where(whereCondition)
+      .limit(1);
+
+    if (!connections.length) {
+      console.log("No Instagram connections found for user");
+      return null;
+    }
+
+    const connection = connections[0];
+    
+    // Get valid token (with automatic refresh if needed)
+    const tokenResult = await getValidInstagramToken(connection.instagramUserId);
+    
+    if (tokenResult.error) {
+      console.error("Error getting valid Instagram token:", tokenResult.error);
+      return null;
+    }
+
+    if (!tokenResult.token) {
+      console.error("No valid token available");
+      return null;
+    }
+
     return {
-      // These would come from your DB, stored after OAuth
-      instagramUserId: process.env.PLACEHOLDER_INSTAGRAM_USER_ID || "default_ig_user_id_from_db",
-      longLivedAccessToken: process.env.PLACEHOLDER_INSTAGRAM_GRAPH_API_ACCESS_TOKEN || "default_long_lived_token_from_db",
-      // accessTokenExpiresAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000) // e.g., 60 days from now
+      instagramUserId: connection.instagramUserId,
+      longLivedAccessToken: tokenResult.token
     };
-  }
-  return null;
-}
 
+  } catch (error) {
+    console.error("Error fetching Instagram credentials:", error);
+    return null;
+  }
+}
 
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies();
@@ -69,39 +78,22 @@ export async function POST(req: NextRequest) {
     sessionOptions
   );
 
-  console.log("Current session:", JSON.stringify(session, null, 2));
+  console.log("Instagram Business post request - session user:", session.appUser?.id);
 
-  if (!session.currentUser?.id) {
+  if (!session.appUser?.id) {
     return NextResponse.json(
       {
-        error:
-          "User not authenticated in the application. Please log in.",
+        error: "User not authenticated in the application. Please log in.",
       },
       { status: 401 }
     );
   }
-  const applicationUserId = session.currentUser.id;
-
-  // Fetch Instagram credentials for the currently logged-in application user
-  const userCredentials = await getInstagramCredentialsForUser(applicationUserId);
-
-  if (!userCredentials) {
-    return NextResponse.json(
-      {
-        error:
-          "Instagram account not connected or credentials expired for this user. Please connect or re-authorize your Instagram account through your profile settings.",
-      },
-      { status: 403 } // 403 Forbidden or 401 Unauthorized might be appropriate
-    );
-  }
-
-  const { longLivedAccessToken: graphApiAccessToken, instagramUserId } = userCredentials;
-
-  console.log(`Using Instagram User ID: ${instagramUserId} for app user: ${applicationUserId}`);
+  
+  const applicationUserId = session.appUser.id;
 
   try {
     const body: PostRequestBody = await req.json();
-    const { imageUrl, caption } = body;
+    const { imageUrl, caption, instagramUserId: specificInstagramUserId } = body;
 
     if (!imageUrl) {
       return NextResponse.json(
@@ -112,40 +104,54 @@ export async function POST(req: NextRequest) {
 
     try {
       new URL(imageUrl);
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    } catch (_) {
+    } catch {
       return NextResponse.json(
         { error: "Invalid image URL format." },
         { status: 400 }
       );
     }
 
+    // Fetch Instagram credentials for the currently logged-in application user
+    const userCredentials = await getInstagramCredentialsForUser(
+      applicationUserId, 
+      specificInstagramUserId
+    );
+
+    if (!userCredentials) {
+      return NextResponse.json(
+        {
+          error: "Instagram Business account not connected or credentials expired. Please connect your Instagram Business account through your profile settings.",
+        },
+        { status: 403 }
+      );
+    }
+
+    const { longLivedAccessToken: graphApiAccessToken, instagramUserId } = userCredentials;
+
+    console.log(`Using Instagram Business Account ID: ${instagramUserId} for app user: ${applicationUserId}`);
+
     // Step 1: Create Media Container
-    // Docs: https://developers.facebook.com/docs/instagram-platform/content-publishing#create-a-container
-    const createContainerUrl = `https://graph.instagram.com/v19.0/${instagramUserId}/media`; // Use latest stable API version
+    // Using Instagram Business API endpoints
+    const createContainerUrl = `https://graph.instagram.com/v22.0/${instagramUserId}/media`;
     
     const containerPayload: { image_url: string; caption?: string; access_token: string } = {
       image_url: imageUrl,
-      access_token: graphApiAccessToken, // Token can also be sent as a query param
+      access_token: graphApiAccessToken,
     };
+    
     if (caption) {
       containerPayload.caption = caption;
     }
 
-    // Note: Instagram API sometimes prefers access_token in the payload for POST media.
-    // Alternatively, it can be in the Authorization header. The docs show examples with it in payload for /media.
-    // For /media_publish, Authorization header is standard.
-    // For consistency and to avoid issues, let's ensure Authorization header is also set correctly if needed,
-    // but for /media, the token in payload is a common pattern.
-
-    console.log("Creating media container with payload:", { imageUrl: containerPayload.image_url, caption: containerPayload.caption }); // Don't log token
+    console.log("Creating Instagram Business media container with payload:", { 
+      imageUrl: containerPayload.image_url, 
+      caption: containerPayload.caption 
+    });
 
     const containerResponse = await fetch(createContainerUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        // Authorization header might not be strictly needed if token is in payload for this specific call
-        // "Authorization": `Bearer ${graphApiAccessToken}`,
       },
       body: JSON.stringify(containerPayload),
     });
@@ -154,12 +160,25 @@ export async function POST(req: NextRequest) {
       const errorBody = await containerResponse.json().catch(() => ({
         error: { message: "Failed to create media container and couldn't parse error response." },
       }));
-      console.error("Error creating media container:", errorBody);
-      // TODO: Implement token refresh logic if error indicates an expired/invalid token
-      // e.g., if (errorBody.error?.code === 190 || (errorBody.error?.error_subcode === 463 || errorBody.error?.error_subcode === 467) ) { /* User token expired, needs re-auth or refresh */ }
+      
+      console.error("Error creating Instagram Business media container:", errorBody);
+      
+      // Check for token-related errors
+      if (errorBody.error?.code === 190 || 
+          errorBody.error?.error_subcode === 463 || 
+          errorBody.error?.error_subcode === 467) {
+        return NextResponse.json(
+          {
+            error: "Instagram Business token has expired. Please reconnect your Instagram account.",
+            tokenExpired: true
+          },
+          { status: 401 }
+        );
+      }
+      
       return NextResponse.json(
         {
-          error: `Failed to create media container. Status: ${containerResponse.status}. Message: ${errorBody.error?.message || JSON.stringify(errorBody)}`,
+          error: `Failed to create Instagram Business media container. Status: ${containerResponse.status}. Message: ${errorBody.error?.message || JSON.stringify(errorBody)}`,
         },
         { status: containerResponse.status }
       );
@@ -175,24 +194,23 @@ export async function POST(req: NextRequest) {
         { status: 500 }
       );
     }
-    console.log(`Media container created with ID: ${creationId}`);
+    
+    console.log(`Instagram Business media container created with ID: ${creationId}`);
 
     // Step 2: Publish Media Container
-    // Docs: https://developers.facebook.com/docs/instagram-platform/content-publishing#publish-the-container
-    const publishMediaUrl = `https://graph.instagram.com/v19.0/${instagramUserId}/media_publish`;
+    const publishMediaUrl = `https://graph.instagram.com/v22.0/${instagramUserId}/media_publish`;
     
     const publishPayload = {
       creation_id: creationId,
-      access_token: graphApiAccessToken, // Token can also be sent as a query param for this call
+      access_token: graphApiAccessToken,
     };
 
-    console.log("Publishing media with creation ID:", creationId);
+    console.log("Publishing Instagram Business media with creation ID:", creationId);
 
     const publishResponse = await fetch(publishMediaUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-         // "Authorization": `Bearer ${graphApiAccessToken}`, // Or include access_token in body
       },
       body: JSON.stringify(publishPayload),
     });
@@ -201,33 +219,49 @@ export async function POST(req: NextRequest) {
       const errorBody = await publishResponse.json().catch(() => ({
         error: { message: "Failed to publish media and couldn't parse error response." },
       }));
-      console.error("Error publishing media:", errorBody);
-      // TODO: Implement token refresh logic if error indicates an expired/invalid token
-      // e.g., if (errorBody.error?.code === 190 || (errorBody.error?.error_subcode === 463 || errorBody.error?.error_subcode === 467) ) { /* User token expired, needs re-auth or refresh */ }
+      
+      console.error("Error publishing Instagram Business media:", errorBody);
+      
+      // Check for token-related errors
+      if (errorBody.error?.code === 190 || 
+          errorBody.error?.error_subcode === 463 || 
+          errorBody.error?.error_subcode === 467) {
+        return NextResponse.json(
+          {
+            error: "Instagram Business token has expired. Please reconnect your Instagram account.",
+            tokenExpired: true,
+            creationId: creationId
+          },
+          { status: 401 }
+        );
+      }
+      
       return NextResponse.json(
         {
-          error: `Failed to publish media. Status: ${publishResponse.status}. Message: ${errorBody.error?.message || JSON.stringify(errorBody)}`,
-          creationId: creationId, // Return creation_id for potential manual retry or status check
+          error: `Failed to publish Instagram Business media. Status: ${publishResponse.status}. Message: ${errorBody.error?.message || JSON.stringify(errorBody)}`,
+          creationId: creationId,
         },
         { status: publishResponse.status }
       );
     }
 
     const publishData = await publishResponse.json();
-    console.log("Media published successfully:", publishData);
+    console.log("Instagram Business media published successfully:", publishData);
 
     return NextResponse.json(
       {
-        message: "Photo posted successfully!",
+        message: "Photo posted successfully to Instagram Business account!",
         postId: publishData.id, // Instagram Media ID
+        instagramUserId: instagramUserId
       },
       { status: 200 }
     );
+    
   } catch (error) {
     const e = error as Error;
-    console.error("Error in Instagram post API:", e);
+    console.error("Error in Instagram Business post API:", e);
     return NextResponse.json(
-      { error: e.message || "An unknown error occurred while posting to Instagram." },
+      { error: e.message || "An unknown error occurred while posting to Instagram Business account." },
       { status: 500 }
     );
   }

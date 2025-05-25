@@ -12,12 +12,13 @@ import { randomBytes } from "crypto";
 // interface MockResAdapter { ... }
 
 // Keeping _req as it is standard for Next.js route handlers, even if unused.
-export async function GET(req: NextRequest) {
+export async function GET() {
   const session = await getIronSession<SessionData>(
     await cookies(),
     sessionOptions
   );
-  // 2. Get necessary environment variables
+  
+  // Get necessary environment variables
   const INSTAGRAM_CLIENT_ID = process.env.INSTAGRAM_CLIENT_ID;
   const INSTAGRAM_REDIRECT_URI = process.env.INSTAGRAM_REDIRECT_URI;
 
@@ -31,27 +32,33 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // 3. Generate and store CSRF state
+  // Generate and store CSRF state
   const state = randomBytes(16).toString("hex");
   session.instagramOAuthState = state;
   await session.save();
 
+  // NEW 2025 Instagram Business Login scopes (replacing deprecated ones)
   const scopes = [
     "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish,instagram_business_manage_insights",
   ];
 
-  // 5. Construct the Instagram authorization URL
+  // Construct the Instagram Business authorization URL
   const params = new URLSearchParams({
     client_id: INSTAGRAM_CLIENT_ID,
     redirect_uri: INSTAGRAM_REDIRECT_URI,
-    scope: scopes.join(" "), // Scopes are space-separated for Instagram Basic Display API
+    scope: scopes.join(","), // Comma-separated for Instagram Business Login
     response_type: "code",
     state: state,
+    // Optional: force authentication for business accounts
+    force_authentication: "1",
+    enable_fb_login: "0"
   });
 
-  const authorizationUrl = `https://api.instagram.com/oauth/authorize?${params.toString()}`;
+  // NEW: Use Instagram Business Login endpoint (not Basic Display API)
+  const authorizationUrl = `https://www.instagram.com/oauth/authorize?${params.toString()}`;
 
-  // 6. Redirect to Instagram
+  console.log("Redirecting to Instagram Business Login:", authorizationUrl);
+  
   return NextResponse.redirect(authorizationUrl);
 }
 
