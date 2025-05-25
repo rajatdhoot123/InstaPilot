@@ -54,7 +54,7 @@ if (!process.env.APP_SECRET || process.env.APP_SECRET.length < 32) {
 // 5. Helper function to get the session in App Router Route Handlers
 export async function getAppRouterSession(): Promise<IronSession<SessionData>> {
   const cookieStore = cookies();
-  const session = await getIronSession<SessionData>(cookieStore, sessionOptions); 
+  const session = await getIronSession<SessionData>(await cookieStore, sessionOptions); 
   return session;
 }
 

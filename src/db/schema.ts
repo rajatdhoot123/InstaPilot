@@ -65,7 +65,9 @@ export const verificationTokens = pgTable(
 
 export const instagramConnections = pgTable("instagram_connections", {
   id: uuid("id").primaryKey().defaultRandom(),
+  appUserId: text("app_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   instagramUserId: varchar("instagram_user_id", { length: 255 }).notNull().unique(),
+  instagramUsername: varchar("instagram_username", {length: 255 }).notNull(),
   longLivedAccessToken: varchar("long_lived_access_token", { length: 512 }).notNull(),
   accessTokenExpiresAt: timestamp("access_token_expires_at", { mode: "date", withTimezone: true }),
   createdAt: timestamp("created_at", { mode: "date", withTimezone: true }).defaultNow().notNull(),

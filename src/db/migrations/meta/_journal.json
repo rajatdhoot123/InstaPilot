@@ -22,6 +22,13 @@
       "when": 1747395153600,
       "tag": "0002_brave_stepford_cuckoos",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1747395477089,
+      "tag": "0003_smooth_moira_mactaggert",
+      "breakpoints": true
     }
   ]
 }

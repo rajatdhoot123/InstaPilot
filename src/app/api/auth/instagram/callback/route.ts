@@ -155,40 +155,48 @@ export async function GET(req: NextRequest) {
     const instagramSourceUsername = meData.username; // Username from Instagram
 
     // Step 4: Determine Application User ID and Store/Update credentials
-    let applicationUserId = session.currentUser?.username; // Use existing session user's username if available
+    const appUserSystemId = session.appUser?.id; 
 
-    if (!applicationUserId) {
-      // No application user in session.
-      // Strategy: Use Instagram username as the application username.
-      // IMPORTANT: This implies you may need to:
-      // 1. Check if a user with 'instagramSourceUsername' already exists in your 'users' table.
-      // 2. If not, create one. This 'instagramSourceUsername' becomes their username in your app.
-      // 3. This new/found username is then used as 'applicationUserId'.
-      applicationUserId = instagramSourceUsername;
-      // Populate the session with this user.
-      // Ensure SessionData's currentUser can hold { username: string }
-      // This is a simplified user object for the session.
-      session.currentUser = { username: applicationUserId };
+    if (!appUserSystemId) {
+      // This is a critical point. If there's no appUser in session, or appUser.id is missing,
+      // you need a strategy to link this new Instagram connection to an application user.
+      // This typically means the user isn't properly logged into your main application.
+      console.error(
+        "No application user ID found in session during Instagram callback. Cannot link account."
+      );
+      // Session might have been modified (e.g., CSRF state cleared), so save it.
+      await session.save();
+      return NextResponse.json(
+        {
+          error:
+            "Application user session not found or incomplete. Please log in to the application first.",
+        },
+        { status: 401 } // Unauthorized or Bad Request
+      );
     }
-    // Now, applicationUserId is guaranteed to be set.
 
     // Upsert: Insert if no record for this instagramProfessionalId, otherwise update existing record.
     // This assumes 'instagramUserId' is a UNIQUE column in your 'instagramConnections' table.
     await db
       .insert(instagramConnections)
       .values({
+        appUserId: appUserSystemId, // Link to your application user
         instagramUserId: instagramProfessionalId, // Instagram's user identifier
+        instagramUsername: instagramSourceUsername, // Store Instagram username
         longLivedAccessToken: longLivedAccessToken,
         accessTokenExpiresAt: accessTokenExpiresAt,
         updatedAt: new Date(),
+        createdAt: new Date(), // Explicitly set createdAt on new insert
       })
       .onConflictDoUpdate({
         target: instagramConnections.instagramUserId, // Conflict target is now instagramUserId
         set: {
+          appUserId: appUserSystemId, // Ensure appUserId is set/updated on conflict too
+          instagramUsername: instagramSourceUsername, // Update username on conflict too
           longLivedAccessToken: longLivedAccessToken,
           accessTokenExpiresAt: accessTokenExpiresAt,
           updatedAt: new Date(),
-          // We typically DO NOT update applicationUserId here.
+          // We typically DO NOT update applicationUserId here unless ensuring it IS set.
           // The link, once made, should be to the same application user.
           // If 'applicationUserId' could be NULL before and needs setting on conflict, add it to 'set'.
         },
@@ -200,14 +208,14 @@ export async function GET(req: NextRequest) {
     delete session.instagramUserId;
     // session.instagramConnected = true; // You might set this flag
 
-    // session.isLoggedIn should now be true, managed by session.currentUser being set.
+    // session.isLoggedIn should now be true, managed by session.appUser being set.
     // session.isLoggedIn = true; // This depends on how your SessionData tracks login
 
-    // Save the session, which now includes currentUser reflecting the logged-in state.
+    // Save the session, which now includes appUser reflecting the logged-in state.
     await session.save();
 
     const redirectResponse = NextResponse.redirect(
-      `${APP_URL}/dashboard?instagram_linked=true&user=${applicationUserId}` // Added user for clarity
+      `${APP_URL}/dashboard?instagram_linked=true&user=${appUserSystemId}` // Added user for clarity
     );
     // Cookies are handled by session.save() with iron-session in App Router
     return redirectResponse;
